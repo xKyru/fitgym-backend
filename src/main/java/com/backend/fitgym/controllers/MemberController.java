@@ -18,7 +18,6 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/members")
-@CrossOrigin(origins = "*")
 public class MemberController {
 
     @Autowired
