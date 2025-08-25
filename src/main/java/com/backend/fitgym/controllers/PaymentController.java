@@ -74,25 +74,4 @@ public class PaymentController {
             @RequestParam(defaultValue = "5") int limit) {
         return paymentService.getLatestMemberPayments(memberId, limit);
     }
-
-    //Elasticsearch
-    @GetMapping("/search/{status}")
-    public List<PaymentDTO> getPaymentsByStatus(@PathVariable String status) throws IOException {
-        return paymentSearchService.searchByStatus(status);
-    }
-
-    @Autowired
-    private ElasticPaymentDataMigrator dataMigrationService;
-
-    @PostMapping("/migrate-elasticsearch")
-    public ResponseEntity<String> migratePaymentsToElasticsearch() {
-        try{
-            String result = dataMigrationService.migratePaymentsToElasticsearch();
-            return ResponseEntity.ok(result);
-        }catch (IOException e){
-            return ResponseEntity.status(500).body("Error en la migración " + e.getMessage());
-        }
-    }
-
-
 }

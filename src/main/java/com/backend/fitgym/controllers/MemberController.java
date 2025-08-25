@@ -81,24 +81,4 @@ public class MemberController {
         return ResponseEntity.notFound().build();
     }
 
-    //Elasticseach
-    @GetMapping("/search/")
-    public List<MemberDTO> searchMembers(@RequestParam String q) throws IOException {
-        return memberSearchService.search(q);
-    }
-
-    //ELastic Migrator
-    @Autowired
-    private ElasticMemberDataMigrator dataMigrationService;
-
-    @PostMapping("/migrate-elasticsearch")
-    public ResponseEntity<String> migrateMembersToElasticsearch() {
-        try {
-            String result = dataMigrationService.migrateMembersToElasticsearch();
-            return ResponseEntity.ok(result);
-        } catch (IOException e) {
-            return ResponseEntity.status(500).body("Error en migración: " + e.getMessage());
-        }
-    }
-
 }

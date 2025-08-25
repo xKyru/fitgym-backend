@@ -1,53 +1,80 @@
 package com.backend.fitgym.services;
 
 import com.backend.fitgym.dto.MemberDTO;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.elasticsearch.action.delete.DeleteRequest;
 import org.elasticsearch.action.index.IndexRequest;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
-import org.elasticsearch.action.support.WriteRequest;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.common.xcontent.XContentType;
+import org.elasticsearch.index.query.MultiMatchQueryBuilder;
 import org.elasticsearch.index.query.QueryBuilders;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 
 import java.io.IOException;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Service
 public class MemberSearchService {
-    private static final String INDEX = "members";
 
     @Autowired
-    private RestHighLevelClient client;
+    private RestHighLevelClient elasticClient;
 
     @Autowired
     private ObjectMapper objectMapper;
 
+    private static final String INDEX = "members";
+
     public void indexMember(MemberDTO member) throws IOException {
         IndexRequest request = new IndexRequest(INDEX)
-                .id(member.getId().toString())
-                .source(objectMapper.writeValueAsString(member), XContentType.JSON)
-                .setRefreshPolicy(WriteRequest.RefreshPolicy.IMMEDIATE);
+                .id(String.valueOf(member.getId()))
+                .source(objectMapper.writeValueAsString(member), XContentType.JSON);
 
-        client.index(request, RequestOptions.DEFAULT);
+        elasticClient.index(request, RequestOptions.DEFAULT);
     }
 
-    /**
-     * 🔍 Búsqueda combinada por nombre o email
-     */
-    public List<MemberDTO> search(String value) throws IOException {
-        SearchRequest request = new SearchRequest(INDEX);
-        SearchSourceBuilder builder = new SearchSourceBuilder();
+    public void deleteMemberById(Long id) throws IOException {
+        boolean exists = elasticClient.exists(
+                new org.elasticsearch.action.get.GetRequest(INDEX, String.valueOf(id)),
+                RequestOptions.DEFAULT
+        );
 
-        // multi_match para buscar en nombre y email
-        builder.query(QueryBuilders.multiMatchQuery(value, "nombre", "email"));
-        request.source(builder);
+        if(!exists){
+            System.err.println("Documento con id " + id + " no existe en Elasticsearch");
+            return;
+        }
 
-        SearchResponse response = client.search(request, RequestOptions.DEFAULT);
+        DeleteRequest request = new DeleteRequest(INDEX, String.valueOf(id));
+        elasticClient.delete(request, RequestOptions.DEFAULT);
+    }
+
+    public List<MemberDTO> search(String q) throws IOException {
+        SearchRequest searchRequest = new SearchRequest(INDEX);
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        sourceBuilder.query(QueryBuilders.boolQuery()
+                .should(QueryBuilders.multiMatchQuery(q)
+                        .field("email", 3.0f) // Mayor peso para email
+                        .field("email._2gram")
+                        .field("email._3gram")
+                        .field("nombre", 2.0f)
+                        .field("apellidos", 2.0f)
+                        .type(MultiMatchQueryBuilder.Type.BOOL_PREFIX) // Importante para search-as-you-type
+                )
+        );
+
+        searchRequest.source(sourceBuilder);
+
+        SearchResponse response = elasticClient.search(searchRequest, RequestOptions.DEFAULT);
 
         List<MemberDTO> results = new ArrayList<>();
         response.getHits().forEach(hit -> {
@@ -60,4 +87,57 @@ public class MemberSearchService {
 
         return results;
     }
+
+    public List<MemberDTO> getAllMembers() throws IOException {
+        SearchRequest searchRequest = new SearchRequest(INDEX);
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+        sourceBuilder.query(QueryBuilders.matchAllQuery());
+        searchRequest.source(sourceBuilder);
+
+        SearchResponse response = elasticClient.search(searchRequest, RequestOptions.DEFAULT);
+
+        List<MemberDTO> results = new ArrayList<>();
+        response.getHits().forEach(hit -> {
+            try {
+                results.add(objectMapper.readValue(hit.getSourceAsString(), MemberDTO.class));
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+        });
+
+        return results;
+    }
+
+    public Map<String, Long> getMemberFacets() throws IOException {
+        SearchRequest searchRequest = new SearchRequest(INDEX);
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
+
+        sourceBuilder.size(0);
+
+        sourceBuilder.aggregation(
+                AggregationBuilders.terms("estado_facet")
+                        .field("estado.keyword")
+        );
+
+        searchRequest.source(sourceBuilder);
+
+        SearchResponse response = elasticClient.search(searchRequest, RequestOptions.DEFAULT);
+
+        Map<String, Long> facets = new HashMap<>();
+
+        // Total de registros en el índice
+        facets.put("total", response.getHits().getTotalHits().value);
+
+        // Totales por estado
+        Terms estadoFacet = response.getAggregations().get("estado_facet");
+        for (Terms.Bucket bucket : estadoFacet.getBuckets()) {
+            String key = bucket.getKeyAsString().toLowerCase();
+            facets.put(key, bucket.getDocCount());
+        }
+
+        return facets;
+    }
+
+
+
 }
